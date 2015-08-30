@@ -1,7 +1,7 @@
 #ifndef COMPUTE_HPP
 #define COMPUTE_HPP
 
-//#include "os.hpp"
+#include "os.hpp"
 #include "math.hpp"
 
 
@@ -9,6 +9,7 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <typeinfo>
 
 void CL_CALLBACK OclErrorCallback(const char *error_info, 
                              const void *private_info, size_t cb, 
@@ -208,42 +209,6 @@ class Kernel {
             return clSetKernelArg(kernel, index, arg.SizeBytes(), NULL);
         }
     };
-    template<>
-    struct Arg< cl_int > {
-        static cl_int Set(cl_kernel kernel, cl_uint index, cl_int &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_int), &arg);
-        }
-    };
-    template<>
-    struct Arg< cl_uint > {
-        static cl_int Set(cl_kernel kernel, cl_uint index, cl_uint &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_uint), &arg);
-        }
-    };
-    template<>
-    struct Arg< cl_long > {
-        static cl_int Set(cl_kernel kernel, cl_uint index, cl_long &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_long), &arg);
-        }
-    };
-    template<>
-    struct Arg< cl_ulong > {
-        static cl_int Set(cl_kernel kernel, cl_uint index, cl_ulong &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_ulong), &arg);
-        }
-    };
-    template<>
-    struct Arg< cl_float > {
-        static cl_int Set(cl_kernel kernel, cl_uint index, cl_float &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_float), &arg);
-        }
-    };
-    template<>
-    struct Arg< cl_double > {
-        static cl_int Set(cl_kernel kernel, cl_uint index, cl_double &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_double), &arg);
-        }
-    };
     
 public:
     Kernel(Program *program, std::string kernel_name);
@@ -341,6 +306,43 @@ public:
 private:
     Program *program_;
     cl_kernel kernel_;
+}; // class Kernel
+
+template<>
+struct Kernel::Arg< cl_int > {
+	static cl_int Set(cl_kernel kernel, cl_uint index, cl_int &arg) {
+		return clSetKernelArg(kernel, index, sizeof(cl_int), &arg);
+	}
+};
+template<>
+struct Kernel::Arg< cl_uint > {
+	static cl_int Set(cl_kernel kernel, cl_uint index, cl_uint &arg) {
+		return clSetKernelArg(kernel, index, sizeof(cl_uint), &arg);
+	}
+};
+template<>
+struct Kernel::Arg< cl_long > {
+	static cl_int Set(cl_kernel kernel, cl_uint index, cl_long &arg) {
+		return clSetKernelArg(kernel, index, sizeof(cl_long), &arg);
+	}
+};
+template<>
+struct Kernel::Arg< cl_ulong > {
+	static cl_int Set(cl_kernel kernel, cl_uint index, cl_ulong &arg) {
+		return clSetKernelArg(kernel, index, sizeof(cl_ulong), &arg);
+	}
+};
+template<>
+struct Kernel::Arg< cl_float > {
+	static cl_int Set(cl_kernel kernel, cl_uint index, cl_float &arg) {
+		return clSetKernelArg(kernel, index, sizeof(cl_float), &arg);
+	}
+};
+template<>
+struct Kernel::Arg< cl_double > {
+	static cl_int Set(cl_kernel kernel, cl_uint index, cl_double &arg) {
+		return clSetKernelArg(kernel, index, sizeof(cl_double), &arg);
+	}
 };
 
 }  // namespace compute

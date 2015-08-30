@@ -18,7 +18,7 @@
 void CL_CALLBACK OclErrorCallback(const char *error_info, 
                              const void *private_info, size_t cb, 
                              void *user_data) {
-    raven::compute::Device *this_device = (raven::compute::Device *)user_data;
+	compute::Device *this_device = (compute::Device *)user_data;
     this_device->ErrorCallback(error_info, private_info, cb);
 }
 
@@ -141,7 +141,8 @@ Device::Device(Os::WindowId window_id) {
         properties_use.push_back((cl_context_properties)window_id);
     }
 #else
-#error cl_context_properties not defined for oses other than windows
+	// TODO file this in
+	//#error cl_context_properties not defined for oses other than windows
 #endif
     
     properties_use.push_back(CL_CONTEXT_PLATFORM);
