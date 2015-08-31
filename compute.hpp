@@ -10,6 +10,10 @@
 #include <iostream>
 #include <vector>
 #include <typeinfo>
+#include <assert.h>
+
+#include <boost/static_assert.hpp>
+#include <boost/type_traits.hpp>
 
 void CL_CALLBACK OclErrorCallback(const char *error_info, 
                              const void *private_info, size_t cb, 
@@ -95,81 +99,87 @@ private:
 };
 
 template< typename T >
-class Buffer {
+class Buffer : public std::vector<T> {
+	BOOST_STATIC_ASSERT((boost::is_same<double,  T>::value ||
+						 boost::is_same<float, T>::value ||
+						 boost::is_same<short, T>::value ||
+						 boost::is_same<unsigned short, T>::value ||
+						 boost::is_same<int, T>::value ||
+						 boost::is_same<unsigned int, T>::value ||
+						 boost::is_same<long, T>::value ||
+						 boost::is_same<unsigned long, T>::value));
 public:
-    Buffer(Device *device, size_t element_count) {
-        device_ = device;
-        element_count_ = element_count;
-        buffer_size_ = sizeof(T)*element_count;
-        host_buffer_ = Os::Memory::Malloc(buffer_size_);
-        cl_int cl_status = CL_SUCCESS;
-        
-        device_buffer_ = clCreateBuffer(device->get_context(), 
-                                        CL_MEM_READ_WRITE,
-                                        buffer_size_, NULL, &cl_status);
-        OclCheckError(cl_status, "clCreateBuffer");
-        
-    }
+
+	Buffer(Device *device, size_t size = 0)
+		: device_(device), device_buffer_(NULL), db_bytes_(0)
+	{
+		if (size) {
+			std::vector<T>::resize(size);
+			SyncGPUBuffer();
+		}
+	}
+
+	Buffer(Buffer &other)
+		: std::vector<T>(other), device_buffer_(other.device_buffer_), db_bytes_(0) {
+		other.device_buffer_ = NULL;
+	}
     
     ~Buffer() {
-        clReleaseMemObject(device_buffer_);
-        Os::Memory::Free(host_buffer_);
+		if (device_buffer_)
+			clReleaseMemObject(device_buffer_);
     }
     
     void CopyToHost() {
-        cl_event event = NULL;
+		cl_event event = NULL;
         cl_int cl_status = clEnqueueReadBuffer(device_->get_command_queue(), 
                                                device_buffer_, CL_FALSE, 0, 
-                                               buffer_size_, host_buffer_, 
+											   SizeBytes(), std::vector<T>::data(),
                                                0, NULL, &event);
         OclCheckError(cl_status, "read buffer");
-        device_->AddEvent(event);
+		device_->AddEvent(event);
     }
     
-    void CopyToDevice() {
+	void CopyToDevice() {
+		SyncGPUBuffer();
+
         cl_event event = NULL;
-        cl_int cl_status = clEnqueueWriteBuffer(device_->get_command_queue(), 
+		cl_int cl_status = clEnqueueWriteBuffer(device_->get_command_queue(),
                                                 device_buffer_, CL_FALSE, 0, 
-                                                buffer_size_, host_buffer_, 
+												SizeBytes(), std::vector<T>::data(),
                                                 0, NULL, &event);
         OclCheckError(cl_status, "write buffer");
         device_->AddEvent(event);
     }
-    
-    T &operator[](size_t i) {
-        return reinterpret_cast< T * >(host_buffer_)[i];
-    }
-    
-    void Clear() {
-        ::memset(host_buffer_, 0, buffer_size_);
-    }
-    
-    size_t Size() const {
-        return element_count_;
-    }
-    
-    size_t SizeBytes() const {
-        return buffer_size_;
-    }
-    
+
+	size_t SizeBytes() {
+		return std::vector<T>::size()*sizeof(T);
+	}
+
     cl_mem *get_mem() {
         return &device_buffer_;
     }
     
 private:
+	void SyncGPUBuffer() {
+		if (db_bytes_ < SizeBytes()) {
+			if (db_bytes_ && device_buffer_)
+				clReleaseMemObject(device_buffer_);
+
+			cl_int cl_status = CL_SUCCESS;
+			db_bytes_ = SizeBytes();
+			device_buffer_ = clCreateBuffer(device_->get_context(),
+											CL_MEM_READ_WRITE,
+											db_bytes_, NULL, &cl_status);
+			OclCheckError(cl_status, "clCreateBuffer");
+		}
+	}
+
     // the device this buffer is located on
     Device *device_;
     
     // reference to the device buffer
-    cl_mem device_buffer_;
-    // the buffer allocated on the host
-    void *host_buffer_;
-    
-    // buffer size metrics
-    // size of the buffer in bytes
-    size_t buffer_size_;
-    // number of elements of T in the buffer
-    size_t element_count_;
+	cl_mem device_buffer_;
+	size_t db_bytes_;
 };
 
 class Program {

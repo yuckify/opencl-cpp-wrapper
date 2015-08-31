@@ -9,7 +9,7 @@
 #include <Windows.h>
 #endif
 
-#if defined(RAVEN_DEBUG)
+#if defined(DEBUG)
 #define DEBUG_STATEMENT(x) x
 #else
 #define DEBUG_STATEMENT(x)
@@ -41,7 +41,7 @@ Device::Device(Os::WindowId window_id) {
     
     cl_int cl_status = CL_SUCCESS;
     
-    DEBUG_STATEMENT(std::cout << "Initializing raven::compute::Device" << std::endl);
+	DEBUG_STATEMENT(std::cout << "Initializing compute::Device" << std::endl);
     
     // get the number of platforms
     cl_uint platform_count = 0;
@@ -82,13 +82,24 @@ Device::Device(Os::WindowId window_id) {
     OclCheckError(cl_status, "get gpu device list");
     
     // select the most powerful device
-    if (device_count > 1) {
-        // TODO select the most powerful device
-        std::cout << "multiple device discovery unimplemented" << std::endl;
-        abort();
+	cl_uint power = 0;
+	if (device_count > 1) {
         for (cl_uint i = 0; i < device_count; i++) {
-            
-        }
+			cl_device_id cur = device_list[i];
+			cl_uint compute_units;
+			clGetDeviceInfo(cur, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(compute_units),
+							&compute_units, NULL);
+
+			cl_uint frequency;
+			clGetDeviceInfo(cur, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(frequency),
+							&frequency, NULL);
+
+			cl_uint tmp = compute_units*frequency;
+			if (tmp > power) {
+				power = tmp;
+				device_id_ = cur;
+			}
+		}
     } else {
         device_id_ = device_list[0];
     }

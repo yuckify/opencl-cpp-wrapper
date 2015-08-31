@@ -37,3 +37,14 @@ void *Os::Atomic::CompareAndSwap(void **destination, void *compare, void *new_va
 #error Atomic::CompareAndSwap undefined for mac os
 #endif
 }
+
+
+void *Os::Memory::Realloc(void *ptr, size_t size) {
+#if defined(__windows__)
+#error Atomic::CompareAndSwap undefined for windows
+#elif defined(__linux__)
+	return realloc(ptr, size);
+#else
+#error Atomic::CompareAndSwap undefined for mac os
+#endif
+}

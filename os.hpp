@@ -2,6 +2,7 @@
 #define OS_HPP
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define __windows__
@@ -28,7 +29,8 @@ void *AlignedMalloc(size_t size, size_t alignment);
 
 void AlignedFree(void *pointer);
 
-inline void *Malloc(size_t size) { return AlignedMalloc(size, 128); }
+inline void *Malloc(size_t size) { return malloc(size); }
+void *Realloc(void *ptr, size_t size);
 
 inline void Free(void *pointer) { AlignedFree(pointer); }
 
