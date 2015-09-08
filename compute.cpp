@@ -24,18 +24,6 @@ void CL_CALLBACK OclErrorCallback(const char *error_info,
 
 namespace compute {
 
-void OclCheckError(cl_int error_code, std::string message) {
-    OclCheckError(error_code, message.c_str());
-}
-
-void OclCheckError(cl_int error_code, const char *message) {
-    if (error_code != CL_SUCCESS) {
-        std::cerr << "error code \"" << error_code << "\" error message \"" 
-                  << message << "\"" << std::endl;
-        abort();
-    }
-}
-
 Device::Device(Os::WindowId window_id) {
     device_id_ = NULL;
     
@@ -166,8 +154,6 @@ Device::Device(Os::WindowId window_id) {
     // make a command queue
     command_queue_ = clCreateCommandQueue(context_, device_id_, 0, &cl_status);
     OclCheckError(cl_status, "create command queue");
-    
-    
 }
 
 void Device::ErrorCallback(const char *error_info, const void *private_info, 
@@ -176,24 +162,12 @@ void Device::ErrorCallback(const char *error_info, const void *private_info,
 }
 
 void Device::Wait() {
-    if (recent_events_.empty())
-        return;
-    
-    cl_int cl_status = CL_SUCCESS;
-    cl_status = clWaitForEvents(recent_events_.size(), &recent_events_.front());
-    OclCheckError(cl_status, "device wait for events");
-    
-    for (size_t i = 0; i < recent_events_.size(); i++) {
-        cl_status = clReleaseEvent(recent_events_[i]);
-        OclCheckError(cl_status, "release event");
-    }
-    recent_events_.clear();
-    
-    OclCheckError(cl_status, "wait for command queue to finish");
-}
+	cl_int status;
 
-void Device::AddEvent(cl_event event) {
-    recent_events_.push_back(event);
+	status = clFlush(command_queue_);
+	OclCheckError(status, "wait for command queue to finish");
+	status = clFinish(command_queue_);
+	OclCheckError(status, "wait for command queue to finish");
 }
 
 Program::Program(Device *device, std::string source) {
@@ -235,7 +209,20 @@ Kernel::Kernel(Program *program, std::string kernel_name) {
     program_ = program;
     cl_int cl_status;
     kernel_ = clCreateKernel(program_->get_program(), kernel_name.c_str(), &cl_status);
-    OclCheckError(cl_status, "create kernel");
+	OclCheckError(cl_status, "create kernel");
+}
+
+Kernel::~Kernel()
+{
+	clReleaseKernel(kernel_);
 }
 
 }  // namespace compute
+
+
+std::ostream &operator<<(std::ostream &out, const compute::Dim &dim)
+{
+	out<<"{ dimensions = " <<dim.dimensions <<", x = " <<dim.x <<", y = "
+		 <<dim.y <<", z = " <<dim.z <<" }";
+	return out;
+}

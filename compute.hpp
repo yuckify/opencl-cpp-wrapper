@@ -11,6 +11,7 @@
 #include <vector>
 #include <typeinfo>
 #include <assert.h>
+#include <algorithm>
 
 #include <boost/static_assert.hpp>
 #include <boost/type_traits.hpp>
@@ -21,15 +22,48 @@ void CL_CALLBACK OclErrorCallback(const char *error_info,
 
 namespace compute {
 
-void OclCheckError(cl_int error_code, std::string message);
-void OclCheckError(cl_int error_code, const char *message);
+#define OclCheckError(error_code, message)										\
+	if (error_code != CL_SUCCESS) {												\
+		std::cerr <<__FILE__ <<":" <<__LINE__									\
+				<< " error code \"" << error_code << "\" error message \""		\
+				<< message << "\"" << std::endl;								\
+		abort();																\
+	}
 
 struct Dim {
+	Dim() : dimensions(0), x(0), y(0), z(0) {}
     Dim(size_t X) : dimensions(1), x(X), y(1), z(1) {}
     Dim(size_t X, size_t Y) : dimensions(2), x(X), y(Y), z(1) {}
     Dim(size_t X, size_t Y, size_t Z) : dimensions(3), x(X), y(Y), z(Z) {}
     Dim(size_t dim, size_t X, size_t Y, size_t Z) :
         dimensions(dim), x(X), y(Y), z(Z) {}
+	Dim GetMin(Dim other) {
+		Dim ret;
+
+		ret.x = std::min(x, other.x);
+		ret.y = std::min(y, other.y);
+		ret.z = std::min(z, other.z);
+		dimensions = 0;
+		if (x > 1) dimensions++;
+		if (y > 1) dimensions++;
+		if (z > 1) dimensions++;
+
+		return ret;
+	}
+
+	Dim GetMax(Dim other) {
+		Dim ret;
+
+		ret.x = std::max(x, other.x);
+		ret.y = std::max(y, other.y);
+		ret.z = std::max(z, other.z);
+		dimensions = 0;
+		if (x > 1) dimensions++;
+		if (y > 1) dimensions++;
+		if (z > 1) dimensions++;
+
+		return ret;
+	}
     
     size_t dimensions;
     union {
@@ -43,8 +77,6 @@ struct Dim {
 };
 
 class Device {
-    friend class Kernel;
-    template< typename T > friend class Buffer;
 public:
     Device(Os::WindowId window_id = NULL);
     
@@ -64,25 +96,38 @@ public:
     cl_device_id get_device_id() const {
         return device_id_;
     }
-    
-protected:
-    void AddEvent(cl_event event);
-    
+
+	Dim GetMaxLocalWorkItems() {
+		Dim ret(3, 0, 0, 0);
+
+		cl_int status = clGetDeviceInfo(device_id_, CL_DEVICE_MAX_WORK_ITEM_SIZES,
+										sizeof(ret.array), &ret.array, NULL);
+		OclCheckError(status, "clGetDeviceInfo()");
+
+		return ret;
+	}
+
+	cl_ulong GetLocalMemorySize() {
+		cl_ulong ret;
+
+		cl_int status = clGetDeviceInfo(device_id_, CL_DEVICE_LOCAL_MEM_SIZE,
+										sizeof(ret), &ret, NULL);
+		OclCheckError(status, "clGetDeviceInfo()");
+
+		return ret;
+	}
+
 private:
-    
-    cl_device_id device_id_;
-    cl_context context_;
-    cl_command_queue command_queue_;
-    
-    // track the events so they may be waited on in the future
-    std::vector< cl_event > recent_events_;
+	cl_device_id device_id_;
+	cl_context context_;
+	cl_command_queue command_queue_;
 };
 
 template< typename T >
 class LocalBuffer {
 public:
     LocalBuffer(size_t element_count) 
-        : element_count_(element_count), buffer_size_(element_count*sizeof(T)) 
+		: element_count_(element_count)
     {}
     
     size_t Size() const {
@@ -90,16 +135,16 @@ public:
     }
     
     size_t SizeBytes() const {
-        return buffer_size_;
+		return element_count_*sizeof(T);
     }
     
 private:
     size_t element_count_;
-    size_t buffer_size_;
 };
 
 template< typename T >
 class Buffer : public std::vector<T> {
+	/* only POD types are supported*/
 	BOOST_STATIC_ASSERT((boost::is_same<double,  T>::value ||
 						 boost::is_same<float, T>::value ||
 						 boost::is_same<short, T>::value ||
@@ -111,75 +156,114 @@ class Buffer : public std::vector<T> {
 public:
 
 	Buffer(Device *device, size_t size = 0)
-		: device_(device), device_buffer_(NULL), db_bytes_(0)
+		: device_(device), device_buffer_(NULL)
 	{
-		if (size) {
+		if (size)
 			std::vector<T>::resize(size);
-			SyncGPUBuffer();
-		}
 	}
 
-	Buffer(Buffer &other)
-		: std::vector<T>(other), device_buffer_(other.device_buffer_), db_bytes_(0) {
-		other.device_buffer_ = NULL;
+	Buffer(const Buffer &other)
+		: std::vector<T>(other), device_(other.device_), device_buffer_(NULL) {
+	}
+
+	Buffer &operator=(const Buffer &other) {
+		std::vector<T>::operator =(other);
+		return *this;
+	}
+
+	Buffer(Device *device, const std::vector< T > &other)
+		: std::vector< T >(other), device_(device), device_buffer_(NULL) {
 	}
     
-    ~Buffer() {
-		if (device_buffer_)
+	~Buffer() {
+		if (device_buffer_) {
 			clReleaseMemObject(device_buffer_);
+			device_buffer_ = NULL;
+		}
     }
-    
+
     void CopyToHost() {
-		cl_event event = NULL;
-        cl_int cl_status = clEnqueueReadBuffer(device_->get_command_queue(), 
-                                               device_buffer_, CL_FALSE, 0, 
-											   SizeBytes(), std::vector<T>::data(),
-                                               0, NULL, &event);
-        OclCheckError(cl_status, "read buffer");
-		device_->AddEvent(event);
+		cl_int status = clEnqueueReadBuffer(device_->get_command_queue(),
+											device_buffer_, CL_FALSE, 0,
+											SizeBytes(), std::vector<T>::data(),
+											0, NULL, NULL);
+		OclCheckError(status, "clEnqueueReadBuffer");
     }
     
 	void CopyToDevice() {
 		SyncGPUBuffer();
 
-        cl_event event = NULL;
-		cl_int cl_status = clEnqueueWriteBuffer(device_->get_command_queue(),
-                                                device_buffer_, CL_FALSE, 0, 
-												SizeBytes(), std::vector<T>::data(),
-                                                0, NULL, &event);
-        OclCheckError(cl_status, "write buffer");
-        device_->AddEvent(event);
+		cl_int status = clEnqueueWriteBuffer(device_->get_command_queue(),
+											 device_buffer_, CL_FALSE, 0,
+											 SizeBytes(), std::vector<T>::data(),
+											 0, NULL, NULL);
+		OclCheckError(status, "clEnqueueWriteBuffer");
     }
+
+	cl_uint GetReferenceCount() {
+		if (!device_buffer_)
+			return 0;
+
+		cl_uint ret;
+		cl_int status = clGetMemObjectInfo(device_buffer_, CL_MEM_REFERENCE_COUNT,
+										   sizeof(ret), &ret, NULL);
+		OclCheckError(status, "clGetMemObjectInfo");
+
+		return ret;
+	}
 
 	size_t SizeBytes() {
 		return std::vector<T>::size()*sizeof(T);
 	}
 
-    cl_mem *get_mem() {
+	size_t DeviceBufferBytes() {
+		if (!device_buffer_)
+			return 0;
+
+		size_t ret = 0;
+
+		cl_int status = clGetMemObjectInfo(device_buffer_, CL_MEM_SIZE,
+										   sizeof(ret), &ret, NULL);
+		OclCheckError(status, "clGetMemObjectInfo");
+
+		return ret;
+	}
+
+	cl_mem *GetDeviceMem() {
         return &device_buffer_;
     }
     
-private:
 	void SyncGPUBuffer() {
-		if (db_bytes_ < SizeBytes()) {
-			if (db_bytes_ && device_buffer_)
+		if (DeviceBufferBytes() < SizeBytes() || !device_buffer_) {
+			if (device_buffer_) {
 				clReleaseMemObject(device_buffer_);
+			}
 
 			cl_int cl_status = CL_SUCCESS;
-			db_bytes_ = SizeBytes();
 			device_buffer_ = clCreateBuffer(device_->get_context(),
 											CL_MEM_READ_WRITE,
-											db_bytes_, NULL, &cl_status);
+											SizeBytes(), NULL, &cl_status);
 			OclCheckError(cl_status, "clCreateBuffer");
 		}
 	}
+
+	void CopyToDeviceBuffer(Buffer< T > &dst, size_t dst_pos, size_t src_pos, size_t src_len) {
+		assert(device_buffer_ && dst.device_buffer_);
+
+		cl_int status = clEnqueueCopyBuffer(device_->get_command_queue(),
+											device_buffer_, dst.device_buffer_,
+											src_pos, dst_pos, src_len, 0, NULL,
+											NULL);
+		OclCheckError(status, "clEnqueueCopyBuffer");
+	}
+
+private:
 
     // the device this buffer is located on
     Device *device_;
     
     // reference to the device buffer
 	cl_mem device_buffer_;
-	size_t db_bytes_;
 };
 
 class Program {
@@ -210,7 +294,7 @@ class Kernel {
     template< typename T >
     struct Arg< Buffer< T > > {
         static cl_int Set(cl_kernel kernel, cl_uint index, Buffer< T > &arg) {
-            return clSetKernelArg(kernel, index, sizeof(cl_mem), arg.get_mem());
+			return clSetKernelArg(kernel, index, sizeof(cl_mem), arg.GetDeviceMem());
         }
     };
     template< typename T >
@@ -222,6 +306,7 @@ class Kernel {
     
 public:
     Kernel(Program *program, std::string kernel_name);
+	~Kernel();
     
     template< typename A, typename B, typename C, typename D, typename E,
               typename F, typename G, typename H, typename I, typename J >
@@ -304,13 +389,10 @@ public:
     void operator()(Dim local_size, Dim global_size, A& arg_0) {
         cl_int cl_status = Arg< A >::Set(kernel_, 0, arg_0);
         
-        cl_event event = NULL;
         cl_status = clEnqueueNDRangeKernel(program_->get_device()->get_command_queue(), kernel_, 
                                            1, NULL, global_size.array, 
-                                           local_size.array, 0, NULL, &event);
+										   local_size.array, 0, NULL, NULL);
         OclCheckError(cl_status, "enqueue kernel");
-        
-        program_->get_device()->AddEvent(event);
     }
     
 private:
@@ -356,5 +438,7 @@ struct Kernel::Arg< cl_double > {
 };
 
 }  // namespace compute
+
+std::ostream &operator<<(std::ostream &out, const compute::Dim &dim);
 
 #endif // COMPUTE_HPP
