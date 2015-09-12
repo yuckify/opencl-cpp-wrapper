@@ -15,6 +15,10 @@
 #define DEBUG_STATEMENT(x)
 #endif
 
+boost::mutex compute::Device::DeviceSelector::lock_;
+std::vector<cl_device_id> compute::Device::DeviceSelector::ids_;
+unsigned compute::Device::DeviceSelector::next_ = 0;
+
 void CL_CALLBACK OclErrorCallback(const char *error_info, 
                              const void *private_info, size_t cb, 
                              void *user_data) {
@@ -45,13 +49,62 @@ Device::Device(Os::WindowId window_id) {
     cl_platform_id *platform_list = new cl_platform_id[platform_count];
     cl_status = clGetPlatformIDs(platform_count, platform_list, NULL);
     OclCheckError(cl_status, "clGetPlatformIDs, get platform list");
-    cl_platform_id platform_use = platform_list[0];
+	cl_platform_id platform_use = NULL;
     
-    /*DEBUG_STATEMENT(
+	for (cl_uint i = 0; i < platform_count; i++) {
+		char str[128];
+		size_t ret_size = 0;
+		cl_int status = 0;
+
+		status = clGetPlatformInfo(platform_list[i], CL_PLATFORM_VENDOR,
+								   128, str, &ret_size);
+		OclCheckError(status, "clGetPlatformInfo");
+		assert(128 >= ret_size);
+
+		if (!strcmp("Advanced Micro Devices, Inc.", str) ||
+				!strcmp("NVIDIA Corporation", str)) {
+			platform_use = platform_list[i];
+		}
+	}
+	assert(platform_use);
+
+	DEBUG_STATEMENT(
     for (cl_uint i = 0; i < platform_count; i++) {
-        std::cout << "platform " <<
+		char str[128];
+		size_t ret_size = 0;
+		cl_int status = 0;
+
+		status = clGetPlatformInfo(platform_list[i], CL_PLATFORM_PROFILE,
+								   128, str, &ret_size);
+		OclCheckError(status, "clGetPlatformInfo");
+		assert(128 >= ret_size);
+		std::cout<<"CL_PLATFORM_PROFILE    " <<str <<std::endl;
+
+		status = clGetPlatformInfo(platform_list[i], CL_PLATFORM_VERSION,
+								   128, str, &ret_size);
+		OclCheckError(status, "clGetPlatformInfo");
+		assert(128 >= ret_size);
+		std::cout<<"CL_PLATFORM_VERSION    " <<str <<std::endl;
+
+		status = clGetPlatformInfo(platform_list[i], CL_PLATFORM_NAME,
+								   128, str, &ret_size);
+		OclCheckError(status, "clGetPlatformInfo");
+		assert(128 >= ret_size);
+		std::cout<<"CL_PLATFORM_NAME       " <<str <<std::endl;
+
+		status = clGetPlatformInfo(platform_list[i], CL_PLATFORM_VENDOR,
+								   128, str, &ret_size);
+		OclCheckError(status, "clGetPlatformInfo");
+		assert(128 >= ret_size);
+		std::cout<<"CL_PLATFORM_VENDOR     " <<str <<std::endl;
+
+		status = clGetPlatformInfo(platform_list[i], CL_PLATFORM_EXTENSIONS,
+								   128, str, &ret_size);
+		OclCheckError(status, "clGetPlatformInfo");
+		assert(128 >= ret_size);
+		std::cout<<"CL_PLATFORM_EXTENSIONS " <<str <<std::endl;
     }
-                )*/
+	);
     delete[] platform_list;
     
     
@@ -70,27 +123,31 @@ Device::Device(Os::WindowId window_id) {
     OclCheckError(cl_status, "get gpu device list");
     
     // select the most powerful device
-	cl_uint power = 0;
-	if (device_count > 1) {
-        for (cl_uint i = 0; i < device_count; i++) {
-			cl_device_id cur = device_list[i];
-			cl_uint compute_units;
-			clGetDeviceInfo(cur, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(compute_units),
-							&compute_units, NULL);
+	sel_.lock_.lock();
+	if (!sel_.ids_.size()) {
+		cl_uint power = 0;
 
-			cl_uint frequency;
-			clGetDeviceInfo(cur, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(frequency),
-							&frequency, NULL);
-
-			cl_uint tmp = compute_units*frequency;
-			if (tmp > power) {
+		// find the most powerful device
+		for (cl_uint i = 0; i < device_count; i++) {
+			device_id_ = device_list[i];
+			cl_uint tmp = GetMaxComputeUnits()*GetMaxFrequency();
+			if (tmp > power)
 				power = tmp;
-				device_id_ = cur;
-			}
 		}
-    } else {
-        device_id_ = device_list[0];
-    }
+
+		// check if there are multiple powerful devices
+		for (cl_uint i = 0; i < device_count; i++) {
+			device_id_ = device_list[i];
+			if (power != GetMaxComputeUnits()*GetMaxFrequency())
+				continue;
+
+			sel_.ids_.push_back(device_id_);
+		}
+	}
+
+	sel_.next_ = sel_.next_ >= sel_.ids_.size() ? 0 : sel_.next_;
+	device_id_ = sel_.ids_[sel_.next_++];
+	sel_.lock_.unlock();
     
     DEBUG_STATEMENT(
     for (cl_uint i = 0; i < device_count; i++) {
@@ -141,7 +198,6 @@ Device::Device(Os::WindowId window_id) {
     }
 #else
 	// TODO file this in
-	//#error cl_context_properties not defined for oses other than windows
 #endif
     
     properties_use.push_back(CL_CONTEXT_PLATFORM);
@@ -156,8 +212,7 @@ Device::Device(Os::WindowId window_id) {
     OclCheckError(cl_status, "create command queue");
 }
 
-void Device::ErrorCallback(const char *error_info, const void *private_info, 
-                   size_t cb) {
+void Device::ErrorCallback(const char *error_info, const void *, size_t) {
     std::cout << "ErrorCallback: " << error_info << std::endl;
 }
 
@@ -222,7 +277,6 @@ Kernel::~Kernel()
 
 std::ostream &operator<<(std::ostream &out, const compute::Dim &dim)
 {
-	out<<"{ dimensions = " <<dim.dimensions <<", x = " <<dim.x <<", y = "
-		 <<dim.y <<", z = " <<dim.z <<" }";
+	out<<"{ x = " <<dim.x <<", y = " <<dim.y <<", z = " <<dim.z <<" }";
 	return out;
 }

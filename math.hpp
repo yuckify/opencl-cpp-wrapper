@@ -5,6 +5,10 @@
 #include<algorithm>
 #include<iostream>
 #include<string.h>
+#include<assert.h>
+
+#include <boost/static_assert.hpp>
+#include <boost/type_traits.hpp>
 
 const uint32_t kPrimeNumbers[] = {
     2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,
@@ -736,6 +740,50 @@ T gcd(T input_a, T input_b) {
         accumulator *= common_factors[i];
     
     return accumulator;
+}
+
+/**
+ * Round up to the nearest power of 2
+ * @value the arbitrary value to be rounded
+ */
+template<typename T>
+T RoundPow2(T value) {
+	BOOST_STATIC_ASSERT((boost::is_same<short, T>::value ||
+						 boost::is_same<unsigned short, T>::value ||
+						 boost::is_same<int, T>::value ||
+						 boost::is_same<unsigned int, T>::value ||
+						 boost::is_same<long, T>::value ||
+						 boost::is_same<unsigned long, T>::value));
+
+	T tmp = value;
+	unsigned counter = 0;
+	while (tmp >>= 1)
+		counter++;
+	return 1<<(counter + 1);
+}
+
+/**
+ * round a value up to some given alignment
+ *
+ * @value the value to be rounded
+ * @alignment the alignment to round up to, this must be a power of two
+ * @return the rounded value
+ */
+template< typename T >
+T RoundAlignment(T value, T alignment) {
+	BOOST_STATIC_ASSERT((boost::is_same<short, T>::value ||
+						 boost::is_same<unsigned short, T>::value ||
+						 boost::is_same<int, T>::value ||
+						 boost::is_same<unsigned int, T>::value ||
+						 boost::is_same<long, T>::value ||
+						 boost::is_same<unsigned long, T>::value));
+	assert(!(alignment & (alignment - 1)));
+
+	T mask = alignment - 1;
+	T ret = value;
+	ret &= ~mask;
+	ret += (value & mask ? alignment : 0);
+	return ret;
 }
 
 #endif // MATH_HPP

@@ -15,6 +15,7 @@
 
 #include <boost/static_assert.hpp>
 #include <boost/type_traits.hpp>
+#include <boost/thread/mutex.hpp>
 
 void CL_CALLBACK OclErrorCallback(const char *error_info, 
                              const void *private_info, size_t cb, 
@@ -31,22 +32,17 @@ namespace compute {
 	}
 
 struct Dim {
-	Dim() : dimensions(0), x(0), y(0), z(0) {}
-    Dim(size_t X) : dimensions(1), x(X), y(1), z(1) {}
-    Dim(size_t X, size_t Y) : dimensions(2), x(X), y(Y), z(1) {}
-    Dim(size_t X, size_t Y, size_t Z) : dimensions(3), x(X), y(Y), z(Z) {}
-    Dim(size_t dim, size_t X, size_t Y, size_t Z) :
-        dimensions(dim), x(X), y(Y), z(Z) {}
+	Dim() : x(0), y(0), z(0) {}
+	Dim(size_t X) : x(X), y(1), z(1) {}
+	Dim(size_t X, size_t Y) : x(X), y(Y), z(1) {}
+	Dim(size_t X, size_t Y, size_t Z) : x(X), y(Y), z(Z) {}
+
 	Dim GetMin(Dim other) {
 		Dim ret;
 
 		ret.x = std::min(x, other.x);
 		ret.y = std::min(y, other.y);
 		ret.z = std::min(z, other.z);
-		dimensions = 0;
-		if (x > 1) dimensions++;
-		if (y > 1) dimensions++;
-		if (z > 1) dimensions++;
 
 		return ret;
 	}
@@ -57,15 +53,14 @@ struct Dim {
 		ret.x = std::max(x, other.x);
 		ret.y = std::max(y, other.y);
 		ret.z = std::max(z, other.z);
-		dimensions = 0;
-		if (x > 1) dimensions++;
-		if (y > 1) dimensions++;
-		if (z > 1) dimensions++;
 
 		return ret;
 	}
-    
-    size_t dimensions;
+
+	size_t GetDimensions() const {
+		return size_t(x > 1) + size_t(y > 1) + size_t(z > 1);
+	}
+
     union {
         struct {
             size_t x;
@@ -80,8 +75,7 @@ class Device {
 public:
     Device(Os::WindowId window_id = NULL);
     
-    void ErrorCallback(const char *error_info, const void *private_info, 
-                       size_t cb);
+	void ErrorCallback(const char *error_info, const void *, size_t);
     
     void Wait();
     
@@ -98,7 +92,7 @@ public:
     }
 
 	Dim GetMaxLocalWorkItems() {
-		Dim ret(3, 0, 0, 0);
+		Dim ret;
 
 		cl_int status = clGetDeviceInfo(device_id_, CL_DEVICE_MAX_WORK_ITEM_SIZES,
 										sizeof(ret.array), &ret.array, NULL);
@@ -117,10 +111,37 @@ public:
 		return ret;
 	}
 
+	cl_uint GetMaxFrequency() {
+		cl_ulong ret;
+
+		cl_int status = clGetDeviceInfo(device_id_, CL_DEVICE_MAX_CLOCK_FREQUENCY,
+										sizeof(ret), &ret, NULL);
+		OclCheckError(status, "clGetDeviceInfo()");
+
+		return ret;
+	}
+
+	cl_uint GetMaxComputeUnits() {
+		cl_ulong ret;
+
+		cl_int status = clGetDeviceInfo(device_id_, CL_DEVICE_MAX_COMPUTE_UNITS,
+										sizeof(ret), &ret, NULL);
+		OclCheckError(status, "clGetDeviceInfo()");
+
+		return ret;
+	}
+
 private:
 	cl_device_id device_id_;
 	cl_context context_;
 	cl_command_queue command_queue_;
+
+	struct DeviceSelector {
+		static boost::mutex lock_;
+		static std::vector<cl_device_id> ids_;
+		static unsigned next_;
+	};
+	DeviceSelector sel_;
 };
 
 template< typename T >
@@ -247,14 +268,27 @@ public:
 		}
 	}
 
-	void CopyToDeviceBuffer(Buffer< T > &dst, size_t dst_pos, size_t src_pos, size_t src_len) {
+	void CopyToDeviceBuffer(Buffer< T > &dst, size_t dst_pos, size_t src_pos, size_t len) {
 		assert(device_buffer_ && dst.device_buffer_);
+		assert(dst_pos + len <= dst.DeviceBufferBytes()/sizeof(T));
+		assert(src_pos + len <= DeviceBufferBytes()/sizeof(T));
 
 		cl_int status = clEnqueueCopyBuffer(device_->get_command_queue(),
 											device_buffer_, dst.device_buffer_,
-											src_pos, dst_pos, src_len, 0, NULL,
+											src_pos, dst_pos, len*sizeof(T), 0, NULL,
 											NULL);
 		OclCheckError(status, "clEnqueueCopyBuffer");
+	}
+
+	void FillDeviceBuffer(T value, size_t count, size_t offset = 0) {
+		assert(device_buffer_);
+		assert(count);
+
+		cl_int status = clEnqueueFillBuffer(device_->get_command_queue(),
+											device_buffer_, &value, sizeof(T),
+											sizeof(T)*offset, sizeof(T)*count,
+											0, NULL, NULL);
+		OclCheckError(status, "clEnqueueFillBuffer");
 	}
 
 private:
@@ -388,9 +422,10 @@ public:
     template< typename A >
     void operator()(Dim local_size, Dim global_size, A& arg_0) {
         cl_int cl_status = Arg< A >::Set(kernel_, 0, arg_0);
-        
+
+		assert(local_size.GetDimensions() == global_size.GetDimensions());
         cl_status = clEnqueueNDRangeKernel(program_->get_device()->get_command_queue(), kernel_, 
-                                           1, NULL, global_size.array, 
+										   local_size.GetDimensions(), NULL, global_size.array,
 										   local_size.array, 0, NULL, NULL);
         OclCheckError(cl_status, "enqueue kernel");
     }
