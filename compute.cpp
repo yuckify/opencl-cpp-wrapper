@@ -1,5 +1,4 @@
 #include "compute.hpp"
-#include "os.hpp"
 #include <CL/cl_gl.h>
 
 #include <algorithm>
@@ -28,7 +27,7 @@ void CL_CALLBACK OclErrorCallback(const char *error_info,
 
 namespace compute {
 
-Device::Device(Os::WindowId window_id) {
+Device::Device(WindowId window_id) {
     device_id_ = NULL;
     
     cl_int cl_status = CL_SUCCESS;

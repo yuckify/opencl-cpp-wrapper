@@ -1,7 +1,6 @@
 #ifndef COMPUTE_HPP
 #define COMPUTE_HPP
 
-#include "os.hpp"
 #include "math.hpp"
 
 
@@ -73,7 +72,13 @@ struct Dim {
 
 class Device {
 public:
-    Device(Os::WindowId window_id = NULL);
+#ifdef _WIN32
+typedef HDC WindowId;
+#else
+typedef void * WindowId;
+#endif
+
+	Device(WindowId window_id = NULL);
     
 	void ErrorCallback(const char *error_info, const void *, size_t);
     
